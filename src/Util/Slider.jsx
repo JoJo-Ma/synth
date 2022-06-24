@@ -1,6 +1,6 @@
 import React from 'react'
 
-const Slider = ({min, max, value, updater, step=1}) => {
+const Slider = ({min, max, value, updater, step=1, label}) => {
 
 
     const onChange = (e) => {
@@ -16,6 +16,7 @@ const Slider = ({min, max, value, updater, step=1}) => {
             step={step}
             onChange={onChange}
             />
+        <span className="tooltip">{label}</span>
         </div>
     )
 }

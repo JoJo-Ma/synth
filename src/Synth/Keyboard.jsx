@@ -1,10 +1,9 @@
 import React from 'react'
 
-const Keyboard = ({notes, play,  setKeyTrigger, setFrequency, stop}) => {
+const Keyboard = ({notes, play, stop}) => {
     
-    const playNote = async (frequency) => {
-        await setFrequency(frequency)
-        setKeyTrigger(prev => !prev)
+    const playNote = (frequency, name) => {
+        play(frequency, name)
     }
     
     return(
@@ -13,8 +12,8 @@ const Keyboard = ({notes, play,  setKeyTrigger, setFrequency, stop}) => {
             notes.map((note, index) => {
                 const [name, frequency] = Object.entries(note)[0]
                 return <button key={index} className='button' 
-                onPointerDown={() => playNote(frequency)}
-                onPointerUp={stop}
+                onPointerDown={() => playNote(frequency, name)}
+                onPointerUp={() => stop(name)}
                 style={
                     name.indexOf('#') === -1 ?
                 {

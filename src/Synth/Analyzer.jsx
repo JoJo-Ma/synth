@@ -31,7 +31,7 @@ const Analyzer = ({audioData, timer}) => {
 
     return (
         <>
-            <canvas width="300" height="300" ref={canvas} />
+            <canvas width="300px" height="300px" ref={canvas} />
         </>
     )
 }

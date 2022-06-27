@@ -8,6 +8,8 @@ import Filter from './Filter'
 import EchoDelay from './EchoDelay'
 import Analyzer from './Analyzer'
 import { filterFrequencyFunc } from '../Util/utilFunctions'
+import useMidi from '../Util/useMidi'
+import MidiToFreq from '../Util/miditofreq.json'
 
 const WAVEFORMS = [
     'sine',
@@ -31,6 +33,7 @@ const NOTES = [
     {"B-3":246.94}
 ]
 
+
 const STAGE_MAX_TIME = 2
 
 
@@ -48,16 +51,19 @@ const Synth = (params) => {
     const gainNodeFeedback = useRef(null)
     const gainNode = useRef(null)
     const analyser = useRef(null)
-    const dataArray = useRef([])
+    const dataArrayOsc = useRef([])
+    const dataArraySpec = useRef([])
     const requestRef = useRef(null)
+    const convolverNode = useRef(null)
     const [timer, setTimer] = useState(false)
-    const [audioData, setAudioData] = useState(new Uint8Array(0))
+    const [audioDataOsc, setAudioDataOsc] = useState(new Uint8Array(0))
+    const [audioDataSpec, setAudioDataSpec] = useState(new Uint8Array(0))
     const [gain, setGain] = useState(0.3)
     const [filterFrequency, setFilterFrequency] = useState(1)
     const [filterQ, setFilterQ] = useState(0)
     const [echoTime, setEchoTime] = useState(0)
     const [echoFeedback, setEchoFeedback] = useState(0)
-
+    const { midiNumber, midiInit } = useMidi()
 
     const getAudioContext = () => {
         //stop current recording playing to avoid duplicated sounds
@@ -69,8 +75,10 @@ const Synth = (params) => {
             sampleRate: 46000
         })
         analyser.current = audioContext.current.createAnalyser()
-        dataArray.current = new Uint8Array(analyser.current.frequencyBinCount)
+        dataArrayOsc.current = new Uint8Array(analyser.current.frequencyBinCount)
+        dataArraySpec.current = new Uint8Array(analyser.current.frequencyBinCount)
         gainNode.current = audioContext.current.createGain();
+        gainNode.current.gain.value = gain  
         gainNode.current.connect(audioContext.current.destination)
         gainNode.current.connect(analyser.current)
         
@@ -83,73 +91,95 @@ const Synth = (params) => {
         osc.frequency.value = freq;
         osc.detune.value = detune
         osc.start()
-
-
         return osc
+    }
+
+    const createOscillatorGroup = (freq, detune, name) => {
+        const osc = createOscillator(freq, 0)
+        const oscFlat = createOscillator(freq, -detune)
+        const oscSharp = createOscillator(freq, detune)
+        const oscGain = audioContext.current.createGain();
+        osc.connect(oscGain)
+        oscFlat.connect(oscGain)
+        oscSharp.connect(oscGain)
+
+
+        return {
+            osc,
+            oscFlat,
+            oscSharp,
+            name,
+            isPressed: true,
+            oscGain
+        }
         // osc.stop(audioContext.current.currentTime + 2)
         
     }
 
     const setupFilterNode = () => {
-        // if (filterNode.current !== null) return
-        filterNode.current = audioContext.current.createBiquadFilter();
+        if (filterNode.current === null) {
+            filterNode.current = audioContext.current.createBiquadFilter()
+        }
         filterNode.current.type = 'lowpass';
         filterNode.current.frequency.value = filterFrequencyFunc(filterFrequency)
         filterNode.current.Q.value = filterQ * 30
+         
+        setupReverbNode()
         
         
     }
     
     const setupDelayNode = () => {
-        // if(delayNode.current !== null) return
-        delayNode.current = audioContext.current.createDelay()
+        let isInitial = false
+        if (delayNode.current === null) {
+            delayNode.current = audioContext.current.createDelay()
+            gainNodeFeedback.current = audioContext.current.createGain()
+            isInitial = true
+        }
         delayNode.current.delayTime.value = echoTime;
-        delayNode.current.connect(gainNode.current)
-
-        gainNodeFeedback.current = audioContext.current.createGain()
         gainNodeFeedback.current.gain.value = echoFeedback
+        console.log(delayNode.current.delayTime.value);
+        if(!isInitial) return
+        delayNode.current.connect(gainNode.current)
         delayNode.current.connect(gainNodeFeedback.current)
         gainNodeFeedback.current.connect(delayNode.current)
-
+        delayNode.current.connect(gainNode.current)
+        convolverNode.current.connect(delayNode.current)
+        isInitial = false
     }
 
+    const setupReverbNode = () => {
+        if (convolverNode.current === null) {
+            convolverNode.current = audioContext.current.createConvolver() 
+        }
+        filterNode.current.connect(convolverNode.current)
+        convolverNode.current.connect(gainNode.current)
+        setupDelayNode()
+    }
 
     const play = (freq, name="unnamed") => {
         console.log(freq);
         console.log(name);
         getAudioContext()
-        gainNode.current.gain.cancelScheduledValues(audioContext.current.currentTime)
+        if(oscillators.current.find(o => o.name === name)) {
+            oscillators.current.find(o => o.name === name).oscGain.gain.cancelScheduledValues(audioContext.current.currentTime)
+        }
         console.log(oscillators.current.find(o => o.name === name));
         if (oscillators.current.find(o => o.name === name)) {
             console.log('replace osc');
-            oscillators.current.find(o => o.name === name).osc.stop()
-            oscillators.current.find(o => o.name === name).osc = createOscillator(freq, 0)
+            oscillators.current.find(o => o.name === name).osc.disconnect()
+            oscillators.current.find(o => o.name === name).osc.connect(oscillators.current.find(o => o.name === name).oscGain)
             oscillators.current.find(o => o.name === name).isPressed = true
         } else {
             console.log('new osc');
-            oscillators.current.push({
-                name:name,
-                osc: createOscillator(freq, 0),
-                isPressed: true})
+            oscillators.current.push(createOscillatorGroup(freq, unisonWidth, name))
         }
         // filter
         setupFilterNode()
-        oscillators.current.find(o => o.name === name).osc.connect(filterNode.current)
-        filterNode.current.connect(gainNode.current) 
-        console.log(filterNode.current.frequency.value);
-
-        gainNode.current.gain.value = gain  
-
-
-        setupDelayNode()
-        //echo effect
-        filterNode.current.connect(delayNode.current) 
-            // osc2.connect(delayNode) 
-            // osc3.connect(delayNode)
-        delayNode.current.connect(gainNode.current)
-
- 
-
+        oscillators.current.find(o => o.name === name).oscGain.connect(filterNode.current)
+        
+        
+        
 
 
         const now = audioContext.current.currentTime;
@@ -157,29 +187,28 @@ const Synth = (params) => {
         const attackEndTime = now + attackDuration
         const decayDuration = decay * STAGE_MAX_TIME
     
-        gainNode.current.gain.setValueAtTime(0, audioContext.current.currentTime)
-        gainNode.current.gain.linearRampToValueAtTime(gain, attackEndTime)
-        gainNode.current.gain.setTargetAtTime(sustain * gain, attackEndTime, decayDuration)
+        oscillators.current.find(o => o.name === name).oscGain.gain.setValueAtTime(0, audioContext.current.currentTime)
+        oscillators.current.find(o => o.name === name).oscGain.gain.linearRampToValueAtTime(gain, attackEndTime)
+        oscillators.current.find(o => o.name === name).oscGain.gain.setTargetAtTime(sustain * gain, attackEndTime, decayDuration)
     }
 
     
     const stopOscillators = (name="unnamed") => {
-        gainNode.current.gain.cancelScheduledValues(audioContext.current.currentTime)
+        oscillators.current.find(o => o.name === name).oscGain.gain.cancelScheduledValues(audioContext.current.currentTime)
         console.log('delete', name);
         oscillators.current.find(o => o.name === name).isPressed = false
         const now = audioContext.current.currentTime;
         const releaseDuration = release * STAGE_MAX_TIME
         const releaseEndTime = now + releaseDuration
         console.log(releaseDuration);
-        gainNode.current.gain.setValueAtTime(gainNode.current.gain.value, now)
-        gainNode.current.gain.linearRampToValueAtTime(0, releaseEndTime)
+        oscillators.current.find(o => o.name === name).oscGain.gain.setValueAtTime(gainNode.current.gain.value, now)
+        oscillators.current.find(o => o.name === name).oscGain.gain.linearRampToValueAtTime(0, releaseEndTime)
         const timer = setTimeout(() => {
             if (!oscillators.current.find(o => o.name === name) ||
             oscillators.current.find(o => o.name === name).isPressed) return
-            oscillators.current.find(o => o.name === name).osc.stop()
             oscillators.current.find(o => o.name === name).osc.disconnect()
-            oscillators.current = oscillators.current.filter(o => o.name !== name)
-        }, (releaseDuration + 0.5   ) * 1000);
+            // oscillators.current = oscillators.current.filter(o => o.name !== name)
+        }, (releaseDuration) * 1000);
         
         
         return () => clearTimeout(timer)
@@ -192,6 +221,16 @@ const Synth = (params) => {
             o.osc.type= WAVEFORMS[waveformIndex]
         })
     }, [waveformIndex])
+
+    useEffect(() => {
+        if(oscillators.current.length === 0) return
+        console.log('changing detune');
+        oscillators.current.forEach((o) => {
+            o.oscSharp.detune.value= unisonWidth
+            o.oscFlat.detune.value= -unisonWidth
+        })
+    }, [unisonWidth])
+    
 
     useEffect(() => {
         if (gainNode.current === null) return
@@ -208,11 +247,25 @@ const Synth = (params) => {
     useEffect(() => {
         requestRef.current = setInterval(() => setTimer(timer => !timer), 1000/15)
         if(audioContext.current !== null) {
-            analyser.current.getByteTimeDomainData(dataArray.current)
-            setAudioData(dataArray.current)
+            analyser.current.getByteTimeDomainData(dataArrayOsc.current)
+            setAudioDataOsc(dataArrayOsc.current)
+            analyser.current.getByteFrequencyData(dataArraySpec.current)
+            setAudioDataSpec(dataArraySpec.current)
         }
         return () => clearInterval(requestRef.current)
     }, [timer])
+
+    useEffect(() => {
+        if(!midiInit) return
+        console.log('ici');
+        console.log(midiNumber);
+        const { id, name, freq} = MidiToFreq.find(el => el.id === midiNumber.id)
+        if(midiNumber.pushedOn) {
+            play(freq, name)
+        } else {
+            stopOscillators(name)
+        }
+    }, [midiNumber])
 
 
     return(
@@ -230,7 +283,10 @@ const Synth = (params) => {
         <button className='button' onClick={() => play(220, 'unnamed')}>Play</button>
         <button className='button' onClick={() => stopOscillators('unnamed')}>Stop</button>
         <Keyboard notes={NOTES} play={play} stop={stopOscillators} />
-        <Analyzer audioData={audioData} timer={timer} />
+        <div className="analyzers">
+            <Analyzer audioData={audioDataOsc} timer={timer} />
+            <Analyzer audioData={audioDataSpec} timer={timer} />
+        </div>
     </div>
     )
 }

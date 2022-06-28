@@ -7,6 +7,7 @@ import ADSRSliders from './ADSRSliders'
 import Filter from './Filter'
 import EchoDelay from './EchoDelay'
 import Analyzer from './Analyzer'
+import Reverb from './Reverb'
 import { filterFrequencyFunc } from '../Util/utilFunctions'
 import useMidi from '../Util/useMidi'
 import MidiToFreq from '../Util/miditofreq.json'
@@ -37,7 +38,7 @@ const NOTES = [
 const STAGE_MAX_TIME = 2
 
 
-const Synth = (params) => {
+const Synth = () => {
     const [waveformIndex, setWaveformIndex] = useState(0)
     const [unisonWidth, setUnisonWidth] = useState(0)
     const [attack, setAttack] = useState(0.2)
@@ -54,7 +55,10 @@ const Synth = (params) => {
     const dataArrayOsc = useRef([])
     const dataArraySpec = useRef([])
     const requestRef = useRef(null)
-    const convolverNode = useRef(null)
+    const reverbNode = useRef(null)
+    const [reverbWetRatio, setReverbWetRatio] = useState(0)
+    const [resonance, setResonance] = useState(0.7)
+    const [dampening, setDampening] = useState(3000)
     const [timer, setTimer] = useState(false)
     const [audioDataOsc, setAudioDataOsc] = useState(new Uint8Array(0))
     const [audioDataSpec, setAudioDataSpec] = useState(new Uint8Array(0))
@@ -72,7 +76,7 @@ const Synth = (params) => {
             // audioContext.current.close( )
         }
         audioContext.current = new AudioContext({
-            sampleRate: 46000
+            sampleRate: 44100
         })
         analyser.current = audioContext.current.createAnalyser()
         dataArrayOsc.current = new Uint8Array(analyser.current.frequencyBinCount)
@@ -85,8 +89,8 @@ const Synth = (params) => {
       }
 
 
-    const createOscillator = (freq, detune) => {
-        const osc = audioContext.current.createOscillator();
+    const createOscillator = (freq, detune, actx) => {
+        const osc = actx.createOscillator();
         osc.type = WAVEFORMS[waveformIndex]
         osc.frequency.value = freq;
         osc.detune.value = detune
@@ -94,11 +98,11 @@ const Synth = (params) => {
         return osc
     }
 
-    const createOscillatorGroup = (freq, detune, name) => {
-        const osc = createOscillator(freq, 0)
-        const oscFlat = createOscillator(freq, -detune)
-        const oscSharp = createOscillator(freq, detune)
-        const oscGain = audioContext.current.createGain();
+    const createOscillatorGroup = (freq, detune, name, actx) => {
+        const osc = createOscillator(freq, 0, actx)
+        const oscFlat = createOscillator(freq, -detune, actx)
+        const oscSharp = createOscillator(freq, detune, actx)
+        const oscGain = actx.createGain();
         osc.connect(oscGain)
         oscFlat.connect(oscGain)
         oscSharp.connect(oscGain)
@@ -112,24 +116,112 @@ const Synth = (params) => {
             isPressed: true,
             oscGain
         }
-        // osc.stop(audioContext.current.currentTime + 2)
         
     }
 
-    const setupFilterNode = () => {
+    const setupFilterNode = (outputNode) => {
         if (filterNode.current === null) {
             filterNode.current = audioContext.current.createBiquadFilter()
         }
         filterNode.current.type = 'lowpass';
         filterNode.current.frequency.value = filterFrequencyFunc(filterFrequency)
         filterNode.current.Q.value = filterQ * 30
-         
-        setupReverbNode()
-        
-        
+        filterNode.current.connect(outputNode)
+        setupDelayNode(filterNode.current, gainNode.current)
+    }
+
+
+    const getAllPass = (actx, freq) => {
+        const allPass = actx.createBiquadFilter();
+        allPass.type = 'allpass';
+        allPass.frequency.value = freq;
+        return allPass;
+      };
+
+    
+    const LowpassCombFilter = (actx, options) => { 
+        const {dampening: frequency, resonance: gainValue, delayTime} = options
+        const lowPass = actx.createBiquadFilter()
+        lowPass.type = 'lowpass'
+        lowPass.frequency.value = frequency
+        const delay = actx.createDelay()
+        delay.delayTime.value = delayTime;
+        const gain = actx.createGain()
+        const inputGain = actx.createGain()
+        const outputGain = actx.createGain()
+        gain.gain.setValueAtTime(gainValue, actx.currentTime);
+        inputGain.connect(delay)
+        .connect(lowPass)
+        .connect(gain)
+        .connect(inputGain)
+        .connect(outputGain)
+        return {
+            lowPass,
+            gain,
+            inputGain,
+            outputGain
+        }
     }
     
-    const setupDelayNode = () => {
+    const setupReverbNode = (actx, inputNode, outputNode) => {
+        console.log(reverbNode);
+        if (reverbNode.current !== null) {
+            inputNode.connect(reverbNode.current.wetGain)
+            inputNode.connect(reverbNode.current.dryGain)
+            return
+        }
+        const ALLPASS_FREQUENCES = [225, 556, 441, 341];
+        const SAMPLE_RATE = 44100;
+        const COMB_FILTER_TUNINGS = [1557, 1617, 1491, 1422, 1277, 1356, 1188, 1116];
+        const wetGain = actx.createGain()
+        wetGain.gain.setValueAtTime(0, actx.currentTime);
+        const dryGain = actx.createGain()
+        dryGain.gain.setValueAtTime(1, actx.currentTime);
+        const combFilters = COMB_FILTER_TUNINGS
+        .map(delayPerSecond => delayPerSecond / SAMPLE_RATE)
+        .map(delayTime => LowpassCombFilter(actx, {dampening, resonance, delayTime}))
+        const merger = actx.createChannelMerger(2)
+        const splitter = actx.createChannelSplitter(2)
+        console.log(combFilters);
+        const combLeft = combFilters.slice(0, 4);
+        const combRight = combFilters.slice(4);
+        const allPassFilters = ALLPASS_FREQUENCES.map(freq => getAllPass(actx, freq))
+        console.log(allPassFilters);
+        if (reverbNode.current === null) {
+            reverbNode.current = {
+                wetGain,
+                dryGain,
+                combFilters,
+                merger,
+                splitter,
+                combFilters,
+                allPassFilters
+            }
+        }
+
+        inputNode.connect(wetGain).connect(splitter);
+        inputNode.connect(dryGain).connect(outputNode);
+        // connect first four combfilters to left splitter and merge them back
+        combLeft.forEach(comb => {
+          splitter.connect(comb.inputGain, 0)
+          comb.outputGain.connect(merger, 0, 0);
+        });
+        // connect last four comb filters to right splitters and merge them back
+        combRight.forEach(comb => {
+            splitter.connect(comb.inputGain, 1)
+            comb.outputGain.connect(merger, 0, 1);
+        });
+        console.log(merger);
+        merger
+        .connect(allPassFilters[0])
+        .connect(allPassFilters[1])
+        .connect(allPassFilters[2])
+        .connect(allPassFilters[3])
+        .connect(outputNode)
+    }
+
+    
+    const setupDelayNode = (inputNode, outputNode) => {
         let isInitial = false
         if (delayNode.current === null) {
             delayNode.current = audioContext.current.createDelay()
@@ -140,22 +232,15 @@ const Synth = (params) => {
         gainNodeFeedback.current.gain.value = echoFeedback
         console.log(delayNode.current.delayTime.value);
         if(!isInitial) return
-        delayNode.current.connect(gainNode.current)
+        delayNode.current.connect(outputNode)
         delayNode.current.connect(gainNodeFeedback.current)
         gainNodeFeedback.current.connect(delayNode.current)
-        delayNode.current.connect(gainNode.current)
-        convolverNode.current.connect(delayNode.current)
+        delayNode.current.connect(outputNode)
+        inputNode.connect(delayNode.current)
         isInitial = false
     }
 
-    const setupReverbNode = () => {
-        if (convolverNode.current === null) {
-            convolverNode.current = audioContext.current.createConvolver() 
-        }
-        filterNode.current.connect(convolverNode.current)
-        convolverNode.current.connect(gainNode.current)
-        setupDelayNode()
-    }
+
 
     const play = (freq, name="unnamed") => {
         console.log(freq);
@@ -172,12 +257,11 @@ const Synth = (params) => {
             oscillators.current.find(o => o.name === name).isPressed = true
         } else {
             console.log('new osc');
-            oscillators.current.push(createOscillatorGroup(freq, unisonWidth, name))
+            oscillators.current.push(createOscillatorGroup(freq, unisonWidth, name, audioContext.current))
         }
         // filter
-        setupFilterNode()
-        oscillators.current.find(o => o.name === name).oscGain.connect(filterNode.current)
-        
+        setupFilterNode(gainNode.current)
+        setupReverbNode(audioContext.current, oscillators.current.find(o => o.name === name).oscGain, filterNode.current, reverbNode.current)
         
         
 
@@ -200,7 +284,6 @@ const Synth = (params) => {
         const now = audioContext.current.currentTime;
         const releaseDuration = release * STAGE_MAX_TIME
         const releaseEndTime = now + releaseDuration
-        console.log(releaseDuration);
         oscillators.current.find(o => o.name === name).oscGain.gain.setValueAtTime(gainNode.current.gain.value, now)
         oscillators.current.find(o => o.name === name).oscGain.gain.linearRampToValueAtTime(0, releaseEndTime)
         const timer = setTimeout(() => {
@@ -257,15 +340,24 @@ const Synth = (params) => {
 
     useEffect(() => {
         if(!midiInit) return
-        console.log('ici');
-        console.log(midiNumber);
-        const { id, name, freq} = MidiToFreq.find(el => el.id === midiNumber.id)
+        const { name, freq } = MidiToFreq.find(el => el.id === midiNumber.id)
         if(midiNumber.pushedOn) {
             play(freq, name)
         } else {
             stopOscillators(name)
         }
     }, [midiNumber])
+
+    useEffect(() => {
+        if (reverbNode.current === null ) return
+        reverbNode.current.wetGain.gain.value = reverbWetRatio
+        reverbNode.current.dryGain.gain.value = 1 - reverbWetRatio
+        reverbNode.current.combFilters.forEach(filter => {
+            filter.lowPass.frequency.value = dampening
+            filter.gain.gain.value = resonance
+        })
+    }, [reverbWetRatio, resonance, dampening])
+    
 
 
     return(
@@ -279,6 +371,14 @@ const Synth = (params) => {
         />
         <Filter setFilterFrequency={setFilterFrequency} setFilterQ={setFilterQ} filterFrequency={filterFrequency} filterQ={filterQ} labelFilterFrequency={filterNode.current !== null  && filterNode.current.frequency.value} />
         <EchoDelay setEchoFeedback={setEchoFeedback} setEchoTime={setEchoTime} echoTime={echoTime} echoFeedback={echoFeedback} />
+        <Reverb setReverbWetRatio={setReverbWetRatio}
+        reverbWetRatio={reverbWetRatio}
+        labelRatio={`${(reverbWetRatio * 100).toFixed()}%`}
+        resonance={resonance}
+        setResonance={setResonance}
+        dampening={dampening}
+        setDampening={setDampening}
+        />
         </div>
         <button className='button' onClick={() => play(220, 'unnamed')}>Play</button>
         <button className='button' onClick={() => stopOscillators('unnamed')}>Stop</button>

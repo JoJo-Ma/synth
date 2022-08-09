@@ -10,7 +10,10 @@ import Analyzer from './Analyzer'
 import Reverb from './Reverb'
 import { filterFrequencyFunc } from '../Util/utilFunctions'
 import useMidi from '../Util/useMidi'
+import usePCKeyboard from '../Util/usePCKeyboard'
 import MidiToFreq from '../Util/miditofreq.json'
+import OctaveChange from './OctaveChange'
+
 
 const WAVEFORMS = [
     'sine',
@@ -68,6 +71,10 @@ const Synth = () => {
     const [echoTime, setEchoTime] = useState(0)
     const [echoFeedback, setEchoFeedback] = useState(0)
     const { midiNumber, midiInit } = useMidi()
+    const { keyboardKey } = usePCKeyboard()
+    // mid c
+    const [refC, setRefC ] = useState(60)
+
 
     const getAudioContext = () => {
         //stop current recording playing to avoid duplicated sounds
@@ -164,7 +171,6 @@ const Synth = () => {
     }
     
     const setupReverbNode = (actx, inputNode, outputNode) => {
-        console.log(reverbNode);
         if (reverbNode.current !== null) {
             inputNode.connect(reverbNode.current.wetGain)
             inputNode.connect(reverbNode.current.dryGain)
@@ -230,7 +236,6 @@ const Synth = () => {
         }
         delayNode.current.delayTime.value = echoTime;
         gainNodeFeedback.current.gain.value = echoFeedback
-        console.log(delayNode.current.delayTime.value);
         if(!isInitial) return
         delayNode.current.connect(outputNode)
         delayNode.current.connect(gainNodeFeedback.current)
@@ -243,18 +248,17 @@ const Synth = () => {
 
 
     const play = (freq, name="unnamed") => {
-        console.log(freq);
-        console.log(name);
         getAudioContext()
         if(oscillators.current.find(o => o.name === name)) {
             oscillators.current.find(o => o.name === name).oscGain.gain.cancelScheduledValues(audioContext.current.currentTime)
         }
-        console.log(oscillators.current.find(o => o.name === name));
+
         if (oscillators.current.find(o => o.name === name)) {
             console.log('replace osc');
             oscillators.current.find(o => o.name === name).osc.disconnect()
             oscillators.current.find(o => o.name === name).osc.connect(oscillators.current.find(o => o.name === name).oscGain)
             oscillators.current.find(o => o.name === name).isPressed = true
+            oscillators.current.find(o => o.name === name).timeStarted = audioContext.current.currentTime
         } else {
             console.log('new osc');
             oscillators.current.push(createOscillatorGroup(freq, unisonWidth, name, audioContext.current))
@@ -276,7 +280,18 @@ const Synth = () => {
         oscillators.current.find(o => o.name === name).oscGain.gain.setTargetAtTime(sustain * gain, attackEndTime, decayDuration)
     }
 
-    
+    // TODO support decay
+    const currentOscGainValue = (now, name) => {
+        let currentGain = (now - oscillators.current.find(o => o.name === name).timeStarted) / (attack * STAGE_MAX_TIME) * gain
+        if (!currentGain) {
+            return gainNode.current.gain.value
+        }
+        if ( currentGain > gainNode.current.gain.value) {
+            return gainNode.current.gain.value * sustain
+        }
+        return currentGain
+    }
+
     const stopOscillators = (name="unnamed") => {
         oscillators.current.find(o => o.name === name).oscGain.gain.cancelScheduledValues(audioContext.current.currentTime)
         console.log('delete', name);
@@ -284,7 +299,7 @@ const Synth = () => {
         const now = audioContext.current.currentTime;
         const releaseDuration = release * STAGE_MAX_TIME
         const releaseEndTime = now + releaseDuration
-        oscillators.current.find(o => o.name === name).oscGain.gain.setValueAtTime(gainNode.current.gain.value, now)
+        oscillators.current.find(o => o.name === name).oscGain.gain.setValueAtTime(currentOscGainValue(now, name), now)
         oscillators.current.find(o => o.name === name).oscGain.gain.linearRampToValueAtTime(0, releaseEndTime)
         const timer = setTimeout(() => {
             if (!oscillators.current.find(o => o.name === name) ||
@@ -340,6 +355,7 @@ const Synth = () => {
 
     useEffect(() => {
         if(!midiInit) return
+        console.log(midiNumber);
         const { name, freq } = MidiToFreq.find(el => el.id === midiNumber.id)
         if(midiNumber.pushedOn) {
             play(freq, name)
@@ -347,6 +363,17 @@ const Synth = () => {
             stopOscillators(name)
         }
     }, [midiNumber])
+
+    useEffect(() => {
+        if(!keyboardKey || !refC ) return
+        const { name, freq } = MidiToFreq.find(el => el.id === ( refC + keyboardKey.noteIndex))
+        if(keyboardKey.pushedOn) {
+            play(freq, name)
+        } else {
+            stopOscillators(name)
+        }
+    }, [keyboardKey])
+
 
     useEffect(() => {
         if (reverbNode.current === null ) return
@@ -379,10 +406,11 @@ const Synth = () => {
         dampening={dampening}
         setDampening={setDampening}
         />
+        <OctaveChange setRefC={setRefC} refC={refC} />
+        <Keyboard notes={MidiToFreq} play={play} stop={stopOscillators} oscillators={oscillators.current} refC={refC} />
         </div>
-        <button className='button' onClick={() => play(220, 'unnamed')}>Play</button>
-        <button className='button' onClick={() => stopOscillators('unnamed')}>Stop</button>
-        <Keyboard notes={NOTES} play={play} stop={stopOscillators} />
+        {/* <button className='button' onClick={() => play(220, 'unnamed')}>Play</button>
+        <button className='button' onClick={() => stopOscillators('unnamed')}>Stop</button> */}
         <div className="analyzers">
             <Analyzer audioData={audioDataOsc} timer={timer} />
             <Analyzer audioData={audioDataSpec} timer={timer} />

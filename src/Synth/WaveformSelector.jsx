@@ -1,12 +1,16 @@
 import React from 'react'
-import Slider from '../Util/Slider'
+import RadialSlider from '../Util/RadialSlider'
 
 const WaveformSelector = ({ waveforms, value, updater}) => {
     return (
         <div className='waveform-selector settings-el'>
-            <p>Waveform</p>
-            <p>{waveforms[value]}</p>
-            <Slider min={0} max={waveforms.length - 1} value={value} updater={updater} />
+            <p className='module-name'>OSC</p>
+            <div className='knobs-container'>
+                <div className="VCF">
+                    <p style={{color:'transparent'}}>s</p>
+                    <RadialSlider min={0} max={waveforms.length - 1} value={value} updater={updater} roundDecimal={0} label={waveforms[value]}/>
+                </div>
+            </div>
         </div>
     )
 }

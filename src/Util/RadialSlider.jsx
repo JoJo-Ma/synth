@@ -1,20 +1,22 @@
-import React, {useState} from 'react'
+/* eslint-disable react/jsx-props-no-spreading */
+/* eslint-disable react/prop-types */
+import React, { useState } from 'react';
 import { useDrag } from '@use-gesture/react';
 
-import styles from './RadialSlider.module.css'
+import styles from './RadialSlider.module.css';
 
 const map = (value, imin, imax, omin, omax) => (
-    (value - imin) / (imax - imin) * (omax - omin) + omin
+  ((value - imin) / (imax - imin)) * (omax - omin) + omin
 );
 
-const clamp = (num, min, max) => {
-    return Math.min(Math.max(num, min), max);
-};
+const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
 
-const getElementCenter = el => {
-  const {top, left, width, height} = el.getBoundingClientRect();
+const getElementCenter = (el) => {
+  const {
+    top, left, width, height,
+  } = el.getBoundingClientRect();
   return [left + width / 2, top + height / 2];
-}
+};
 
 const getAngle = ([x, y], [left, top], from, range) => {
   const adjacent = left - x;
@@ -33,44 +35,43 @@ const getAngle = ([x, y], [left, top], from, range) => {
   }
 
   return clamp(angle, 0, range);
-}
+};
 
-const RadialSlider = ({label, min, max, value,updater, roundDecimal = 2}) => {
-    const [angle, setAngle] = useState(map(value,min,max, 40, 320));
-    const bind = useDrag(({values, event}) => {
-        const angle = getAngle(getElementCenter(event.target), values, 220, 280) + 40
-      setAngle(angle);
-        updater(map(angle, 40, 320, min,max).toFixed(roundDecimal))
-    });
-    
-    return (
-      <div {...bind()} className={`${styles.radialSlider} slider`}>
-        <div className={styles.knob} style={{'--angle': `${angle}deg`}}>
-          <div className={styles.cap}/>
-          <div className={styles.indicator}/>
-          <div className={styles.numbers}>
-        {[...new Array(24)].map((_, i) => {
-          const angle = Math.round(i * (360 / 24))
-          return (
-            <div className={styles.line} style={{'--angle': `${angle}deg`}}>
-              <div className={
-                angle < 140 || angle > 220 ?
-                styles.stroke
-                :
-                ''
-              
-              }></div>
-            </div>
-          )
+function RadialSlider({
+  label, min, max, value, updater, roundDecimal = 2,
+}) {
+  const [angle, setAngle] = useState(map(value, min, max, 40, 320));
+  const bind = useDrag(({ values, event }) => {
+    const angl = getAngle(getElementCenter(event.target), values, 220, 280) + 40;
+    setAngle(angl);
+    updater(map(angl, 40, 320, min, max).toFixed(roundDecimal));
+  });
 
-        }
-        
-        )}
-      </div>
+  return (
+    <div {...bind()} className={`${styles.radialSlider} slider`}>
+      <div className={styles.knob} style={{ '--angle': `${angle}deg` }}>
+        <div className={styles.cap} />
+        <div className={styles.indicator} />
+        <div className={styles.numbers}>
+          {[...new Array(24)].map((_, i) => {
+            const angl = Math.round(i * (360 / 24));
+            return (
+              <div className={styles.line} style={{ '--angle': `${angl}deg` }}>
+                <div className={
+                angl < 140 || angl > 220
+                  ? styles.stroke
+                  : ''
+
+              }
+                />
+              </div>
+            );
+          })}
         </div>
-        <span className="tooltip">{label ? label : value}</span>
       </div>
-    );
+      <span className="tooltip">{label || value}</span>
+    </div>
+  );
 }
 
-export default RadialSlider
+export default RadialSlider;

@@ -1,10 +1,10 @@
 // Based off a tweet and codesandbox:
 // https://mobile.twitter.com/hieuhlc/status/1164369876825169920
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from 'react';
 
 // Reusable component that also takes dependencies
 export default (cb) => {
-  if (typeof performance === "undefined" || typeof window === "undefined") {
+  if (typeof performance === 'undefined' || typeof window === 'undefined') {
     return;
   }
 
